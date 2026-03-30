@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SARA AI | Vtech250 Pro Debug</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+        body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
+        .core-container { position: relative; width: 300px; height: 300px; display: flex; justify-content: center; align-items: center; cursor: pointer; }
+        .ring { position: absolute; width: 110%; height: 110%; border-radius: 50%; border: 2px solid rgba(99, 102, 241, 0.2); border-top: 4px solid #6366f1; animation: spin 4s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        canvas { border-radius: 50%; filter: drop-shadow(0 0 20px #4f46e5); }
+        .status-font { font-family: 'Orbitron', sans-serif; letter-spacing: 2px; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="h-screen flex flex-col items-center justify-center bg-black">
+
+    <div class="absolute top-10 text-center">
+        <h1 class="status-font text-[10px] text-indigo-400 mb-2 opacity-60">VTECH250 ADVANCED SYSTEM</h1>
+        <div class="bg-white/5 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 flex items-center gap-3">
+            <div id="led" class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
+            <span id="label" class="text-[9px] uppercase tracking-widest text-slate-400">Tap to Initialize</span>
+        </div>
+    </div>
+
+    <div class="core-container" id="main-action">
+        <div class="ring"></div>
+        <div id="canvas-box"></div>
+    </div>
+
+    <div class="absolute bottom-10 w-full px-10 text-center">
+        <p id="transcript-view" class="text-indigo-400 text-xs mb-4 uppercase h-4 font-bold tracking-widest"></p>
+        <div id="ai-view" class="text-lg font-light opacity-90 text-slate-300 leading-relaxed max-h-40 overflow-y-auto px-4 scrollbar-hide">SARA System Ready.</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
+
+    <script>
+        const API_KEY = "AIzaSyBO2bP-SFprHAmPhitGNde_wlGIY0Czut8"; 
+        const MODEL_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + API_KEY;
+
+        let chatHistory = []; 
+        let scene, camera, renderer, sphere, noise = new SimplexNoise();
+        let appState = { speaking: false, thinking: false, active: false };
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000); camera.position.z = 1.3;
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(300, 300);
+            document.getElementById('canvas-box').appendChild(renderer.domElement);
+            const geo = new THREE.IcosahedronGeometry(0.5, 30);
+            const mat = new THREE.MeshBasicMaterial({ color: 0x4f46e5, wireframe: true, transparent: true, opacity: 0.7 });
+            sphere = new THREE.Mesh(geo, mat);
+            scene.add(sphere);
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            let time = Date.now() * 0.001;
+            let intensity = appState.speaking ? 0.45 : (appState.thinking ? 0.25 : 0.05);
+            sphere.rotation.y += 0.01;
+            const pos = sphere.geometry.getAttribute('position');
+            const v = new THREE.Vector3();
+            for (let i = 0; i < pos.count; i++) {
+                v.fromBufferAttribute(pos, i).normalize();
+                let n = noise.noise3D(v.x + time, v.y + time, v.z + time);
+                v.multiplyScalar((1 + n * intensity) * 0.5);
+                pos.setXYZ(i, v.x, v.y, v.z);
+            }
+            pos.needsUpdate = true;
+            renderer.render(scene, camera);
+        }
+
+        const label = document.getElementById('label');
+        const led = document.getElementById('led');
+        const aiView = document.getElementById('ai-view');
+        const transcriptView = document.getElementById('transcript-view');
+        const mainAction = document.getElementById('main-action');
+
+        const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        if (Recognition) {
+            const rec = new Recognition();
+            rec.continuous = false;
+            rec.lang = 'hi-IN';
+
+            function startMic() {
+                if (appState.speaking || appState.thinking) return;
+                try { 
+                    rec.start(); 
+                    led.className = "w-2 h-2 rounded-full bg-green-500 animate-pulse";
+                    label.innerText = "Listening...";
+                } catch(e) {}
+            }
+
+            mainAction.onclick = () => {
+                if(!appState.active) {
+                    appState.active = true;
+                    aiView.innerText = "System online. Boliye Vikram...";
+                    startMic();
+                }
+            };
+
+            rec.onresult = async (event) => {
+                const speech = event.results[0][0].transcript;
+                transcriptView.innerText = speech;
+                processAI(speech);
+            };
+
+            async function processAI(q) {
+                const queryLower = q.toLowerCase().trim();
+                
+                // Wake Word Logic: Agar sirf "SARA" bola to restart mic silently
+                if (queryLower === "sara" || queryLower === "सारा") {
+                    startMic();
+                    return;
+                }
+
+                appState.thinking = true;
+                label.innerText = "Thinking...";
+                led.className = "w-2 h-2 rounded-full bg-yellow-500 animate-ping";
+                
+                // Response fetch hote waqt "Ruko" bolegi
+                speak("Ruko, main dekh rahi hoon", false); 
+
+                chatHistory.push({ role: "user", parts: [{ text: q }] });
+
+                try {
+                    const res = await fetch(MODEL_URL, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ 
+                            contents: chatHistory,
+                            generationConfig: { maxOutputTokens: 1000, temperature: 0.7 } 
+                        })
+                    });
+                    const data = await res.json();
+
+                    console.clear();
+                    if (data.candidates && data.candidates[0]) {
+                        let reply = data.candidates[0].content.parts[0].text;
+                        console.log("%c>>> SARA RESPONSE <<<", "color: #6366f1; font-weight: bold;", reply);
+
+                        chatHistory.push({ role: "model", parts: [{ text: reply }] });
+                        
+                        aiView.innerText = reply;
+                        appState.thinking = false;
+                        
+                        // Cleaner TTS: Remove markdown symbols for speech
+                        const cleanReply = reply.replace(/[#*\"_]/g, '');
+                        speak(cleanReply, true); 
+                    } else {
+                        appState.thinking = false;
+                        startMic();
+                    }
+                } catch (e) {
+                    console.error("API Error:", e);
+                    appState.thinking = false;
+                    startMic();
+                }
+            }
+
+            function speak(t, shouldRestartMic) {
+                window.speechSynthesis.cancel(); 
+                appState.speaking = true;
+                label.innerText = "SARA Speaking...";
+                led.className = "w-2 h-2 rounded-full bg-blue-500 animate-bounce";
+
+                const chunks = t.match(/[^.!?\n]+[.!?\n]*/g) || [t];
+                let index = 0;
+
+                function next() {
+                    if (index < chunks.length) {
+                        const u = new SpeechSynthesisUtterance(chunks[index].trim());
+                        u.lang = 'hi-IN';
+                        u.rate = 1.0;
+                        u.onend = () => { index++; next(); };
+                        u.onerror = () => { index++; next(); };
+                        window.speechSynthesis.speak(u);
+                    } else {
+                        appState.speaking = false;
+                        if (shouldRestartMic) startMic();
+                    }
+                }
+                next();
+            }
+
+            rec.onend = () => { 
+                if(!appState.thinking && !appState.speaking && appState.active) startMic(); 
+            };
+        }
+
+            init();
+    </script>
+</body>
+</html>
